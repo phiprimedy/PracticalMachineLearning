@@ -1,0 +1,104 @@
+```{r load_packages, include=FALSE}
+library(caret)
+set.seed(12345)
+```
+Practical Machine Learning - Project Writeup
+========================================================
+
+Introduction
+-------------
+The goal of this project is is to build and use a model that can accurately predict the manner in which exercise was done based on measurement data from accelerometers attached to the various body parts of participants. Training data obtained from 6 participants is available and the final model needs to be able to make predictions for 20 different test cases.
+The caret package was used for building the model and making the predictions.
+
+Initial Exploration and Feature Selection/Elimination
+-------------------------------------------------------
+The training data is seen to have 19622 observations of 160 variables with classe being the predicted variable. 
+```{r}
+trainRaw <- read.csv('pml-training.csv', na.strings=c("NA",""))
+dim(trainRaw)
+```
+classe is seen to contain 5 levels A through E.
+```{r}
+summary(trainRaw$classe)
+```
+A large number of columns are seen to contain no data at all for any of the observations. When these columns are eliminated, we are left with 60 variables out of the 160.
+```{r}
+NullData <- apply(trainRaw, 2, function(x) { sum(is.na(x))})
+trainNoNulls <- trainRaw[, which(NullData == 0) ]
+```
+
+At this point, we decide to use the RandomForest method for building the model as this is known to produce high accuracy as discussed in the lectures. If we don't get good results, we will try other methods. Based on this decision, we remove the factor variables user_name, cvtd_timestamp and new_window. We also remove the the other timestamp variables and X which is seen to be very well correlated to classe and that may be due to the ordering in the training set.
+```{r}
+featurePlot(x=trainNoNulls$X, y=trainNoNulls$classe)
+```
+Now we are left with 53 predictors for classe.
+```{r}
+inRedundantCols <- grep("timestamp|X|user_name|new_window",names(trainNoNulls))
+trainClean <- trainNoNulls[,-inRedundantCols]
+dim(trainClean)
+```
+We do feature plots just to confirm that no obvious anomalies are present in the cleaned data.
+```{r}
+featurePlot(x=trainClean[,1:25], y=trainClean$classe)
+featurePlot(x=trainClean[,26:53], y=trainClean$classe)
+```
+
+
+Model Building
+----------------
+As mentioned in the last section, we will attempt to build the model using Random Forest which is known to produce high accuracy in many cases. If we don't get good results, we will try other methods.
+
+We divide the training set into a 60% training subset and a 40% testing subset. The first will be split into folds for cross-validation and selecting the final model, all through the train function in the caret package.
+
+```{r}
+inTrain <- createDataPartition(y=trainClean$classe, p=0.6, list = FALSE)
+training <- trainClean[inTrain,]
+testing <- trainClean[-inTrain,]
+dim(training)
+dim(testing)
+```
+
+We use a 4-fold cross validation at first. We may try other values if final model accuracy is not satisfactory.
+
+```{r}
+trControl <- trainControl(method = "cv", number = 4, allowParallel = TRUE)
+modelFitRF <- train(classe ~ ., data=training, method="rf",
+                    trControl=trControl, proximity=TRUE)
+modelFitRF
+```
+
+We see an accuracy in excess of 0.99 on the training subset for the final model selected by train after cross-validation. Next we have to check the model's performance on the testing subset.
+
+Checking the Model on the testing subset
+-----------------------------------------
+```{r}
+predictionsRF <- predict(modelFitRF, testing)
+confusionMatrix(predictionsRF, testing$classe)
+```
+Even on the training subset the accuracy is in excess of 0.99 even with the 95% confidence interval.
+
+Final Predictions on the testing set
+--------------------------------------
+Now that we are satisfied with the model's performance on the testing subset of the training data, we apply it to predict classe for the 20 testcases in pml-testing.csv. A file per test case is generated to help in the Submission part of the project.
+
+All 20 are indicated to be correct by the Submission Auto-grader.
+
+```{r}
+finalTest <- read.csv('pml-testing.csv')
+
+N <- ncol(training)-1
+transformedTest <- finalTest[,names(training)[1:N]]
+
+finalPredictionsRF <- predict(modelFitRF, transformedTest)
+
+pml_write_files <- function(x,method){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",method,"_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+
+pml_write_files(finalPredictionsRF, "RF")
+```
